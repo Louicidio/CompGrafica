@@ -6,6 +6,7 @@ from PIL import Image, ImageTk
 import threading
 import pygame
 from collections import deque
+import time
 
 class ImageProcessingApp:
     def __init__(self, root):
@@ -24,12 +25,34 @@ class ImageProcessingApp:
         self.tracker_bbox = None
         self.object_detected = False
         
+        # Variáveis para vídeo de arquivo
+        self.is_video_file_running = False
+        self.video_file_path = None
+        self.video_paused = False
+        self.video_after_id = None  # ID do agendamento after() para vídeo
+
+        # Filtros para aplicar em tempo real no vídeo
+        self.video_filters = []  # Lista de filtros ativos no vídeo
+
+        # Variáveis de detecção facial e som
+        self.face_detection_active = False
+        self.sound_playing = False
+        
+        # ===== CONFIGURE AQUI O CAMINHO DA MÚSICA =====
+        # Coloque o caminho completo do arquivo de música (MP3, WAV ou OGG)
+        # Exemplo: r"C:\Users\SeuNome\Musicas\minha_musica.mp3"
+        self.music_file = r"C:\Users\Luis Eduardo\Desktop\2025\2 Semestre\CompGrafica\TrabCompGrafica\homelander.wav"  # Altere este caminho para sua música
+        # ================================================
+
         # Inicializar pygame para tocar música
         pygame.mixer.init()
         
+        # Carregar música automaticamente se o arquivo existir
+        self.load_music_from_path()
+
         # Detector de objeto (YOLO ou cascade para detecção de pessoa)
         self.face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-        
+
         # Criar interface
         self.create_widgets()
         
@@ -66,8 +89,11 @@ class ImageProcessingApp:
         # Seção: Aquisição de Imagens
         ttk.Label(left_frame, text="AQUISIÇÃO", font=('Arial', 10, 'bold')).pack(pady=(0, 5))
         ttk.Button(left_frame, text="📁 Carregar Imagem", command=self.load_image, width=25).pack(pady=2)
+        ttk.Button(left_frame, text="🎬 Carregar Vídeo", command=self.load_video, width=25).pack(pady=2)
         ttk.Button(left_frame, text="📹 Iniciar Câmera", command=self.start_camera, width=25).pack(pady=2)
-        ttk.Button(left_frame, text="⏹ Parar Câmera", command=self.stop_camera, width=25).pack(pady=2)
+        ttk.Button(left_frame, text="⏹ Parar Câmera/Vídeo", command=self.stop_camera, width=25).pack(pady=2)
+        ttk.Button(left_frame, text="⏸ Pausar/Retomar Vídeo", command=self.toggle_pause_video, width=25).pack(pady=2)
+        ttk.Button(left_frame, text="🧹 Limpar Filtros Vídeo", command=self.clear_video_filters, width=25).pack(pady=2)
         
         ttk.Separator(left_frame, orient='horizontal').pack(fill='x', pady=10)
         
@@ -107,7 +133,7 @@ class ImageProcessingApp:
         # Seção: Rastreamento
         ttk.Label(left_frame, text="RASTREAMENTO", font=('Arial', 10, 'bold')).pack(pady=(0, 5))
         ttk.Button(left_frame, text="🎯 Iniciar Rastreamento", command=self.init_tracking, width=25).pack(pady=2)
-        ttk.Button(left_frame, text="🎵 Detectar Rosto + Música", command=self.toggle_face_detection, width=25).pack(pady=2)
+        ttk.Button(left_frame, text="👤 Detectar Rosto + Música", command=self.toggle_face_detection, width=25).pack(pady=2)
         
         ttk.Separator(left_frame, orient='horizontal').pack(fill='x', pady=10)
         
@@ -129,6 +155,10 @@ class ImageProcessingApp:
         
     def load_image(self):
         """Carregar imagem de arquivo"""
+        # Parar vídeo se estiver rodando
+        if self.is_camera_running or self.is_video_file_running:
+            self.stop_camera()
+        
         file_path = filedialog.askopenfilename(
             title="Selecione uma imagem",
             filetypes=[("Imagens", "*.jpg *.jpeg *.png *.bmp *.tiff"), ("Todos", "*.*")]
@@ -142,6 +172,34 @@ class ImageProcessingApp:
                 self.status_label.config(text=f"Imagem carregada: {file_path}")
             else:
                 messagebox.showerror("Erro", "Não foi possível carregar a imagem")
+    
+    def load_video(self):
+        """Carregar vídeo de arquivo"""
+        # Parar câmera/vídeo se estiver rodando
+        if self.is_camera_running or self.is_video_file_running:
+            self.stop_camera()
+        
+        file_path = filedialog.askopenfilename(
+            title="Selecione um vídeo",
+            filetypes=[
+                ("Vídeos", "*.mp4 *.avi *.mov *.mkv *.flv *.wmv"),
+                ("Todos", "*.*")
+            ]
+        )
+        
+        if file_path:
+            self.video_file_path = file_path
+            self.video_capture = cv2.VideoCapture(file_path)
+            
+            if self.video_capture.isOpened():
+                self.is_video_file_running = True
+                self.video_paused = False
+                # Usar after() em vez de thread para melhor desempenho
+                self.update_video_file()
+                self.status_label.config(text=f"Vídeo carregado: {file_path}")
+            else:
+                messagebox.showerror("Erro", "Não foi possível carregar o vídeo")
+                self.video_file_path = None
                 
     def start_camera(self):
         """Iniciar captura de vídeo da câmera"""
@@ -156,46 +214,189 @@ class ImageProcessingApp:
                 messagebox.showerror("Erro", "Não foi possível acessar a câmera")
                 
     def stop_camera(self):
-        """Parar captura de vídeo"""
+        """Parar captura de câmera ou vídeo"""
         self.is_camera_running = False
+        self.is_video_file_running = False
+        self.video_paused = False
+        
+        # Cancelar agendamento de vídeo se existir
+        if self.video_after_id:
+            self.root.after_cancel(self.video_after_id)
+            self.video_after_id = None
+        
         if self.video_capture:
             self.video_capture.release()
-        self.status_label.config(text="Câmera parada")
+            self.video_capture = None
+        
+        self.video_file_path = None
+        self.video_filters.clear()  # Limpar filtros ao parar câmera/vídeo
+        self.status_label.config(text="Câmera/Vídeo parado")
+    
+    def toggle_pause_video(self):
+        """Pausar/retomar reprodução de vídeo"""
+        if not self.is_video_file_running:
+            messagebox.showinfo("Aviso", "Nenhum vídeo está sendo reproduzido")
+            return
+        
+        self.video_paused = not self.video_paused
+        status = "pausado" if self.video_paused else "retomado"
+        self.status_label.config(text=f"Vídeo {status}")
+    
+    def update_video_file(self):
+        """Atualizar frames do vídeo de arquivo com filtros aplicados"""
+        if not self.is_video_file_running:
+            return
+            
+        if not self.video_paused:
+            ret, frame = self.video_capture.read()
+            
+            if not ret:
+                # Reiniciar vídeo quando terminar
+                self.video_capture.set(cv2.CAP_PROP_POS_FRAMES, 0)
+            else:
+                # Aplicar filtros selecionados
+                processed_frame = frame.copy()
+                for filter_name in self.video_filters:
+                    if filter_name == 'grayscale':
+                        processed_frame = cv2.cvtColor(processed_frame, cv2.COLOR_BGR2GRAY)
+                        processed_frame = cv2.cvtColor(processed_frame, cv2.COLOR_GRAY2BGR)
+                    elif filter_name == 'negative':
+                        processed_frame = cv2.bitwise_not(processed_frame)
+                    elif filter_name == 'binary':
+                        gray = cv2.cvtColor(processed_frame, cv2.COLOR_BGR2GRAY)
+                        _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                        processed_frame = cv2.cvtColor(binary, cv2.COLOR_GRAY2BGR)
+                    elif filter_name == 'mean':
+                        processed_frame = cv2.blur(processed_frame, (5, 5))
+                    elif filter_name == 'median':
+                        processed_frame = cv2.medianBlur(processed_frame, 5)
+                    elif filter_name == 'canny':
+                        gray = cv2.cvtColor(processed_frame, cv2.COLOR_BGR2GRAY)
+                        edges = cv2.Canny(gray, 100, 200)
+                        processed_frame = cv2.cvtColor(edges, cv2.COLOR_GRAY2BGR)
+                    elif filter_name == 'erosion':
+                        kernel = np.ones((5, 5), np.uint8)
+                        processed_frame = cv2.erode(processed_frame, kernel, iterations=1)
+                    elif filter_name == 'dilation':
+                        kernel = np.ones((5, 5), np.uint8)
+                        processed_frame = cv2.dilate(processed_frame, kernel, iterations=1)
+                    elif filter_name == 'opening':
+                        kernel = np.ones((5, 5), np.uint8)
+                        processed_frame = cv2.morphologyEx(processed_frame, cv2.MORPH_OPEN, kernel)
+                    elif filter_name == 'closing':
+                        kernel = np.ones((5, 5), np.uint8)
+                        processed_frame = cv2.morphologyEx(processed_frame, cv2.MORPH_CLOSE, kernel)
+                
+                # Aplicar rastreamento se ativo
+                if self.tracker:
+                    success, box = self.tracker.update(processed_frame)
+                    if success:
+                        x, y, w, h = [int(v) for v in box]
+                        cv2.rectangle(processed_frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                
+                # Aplicar detecção facial se ativa
+                if self.face_detection_active:
+                    gray = cv2.cvtColor(processed_frame, cv2.COLOR_BGR2GRAY)
+                    faces = self.face_cascade.detectMultiScale(gray, 1.3, 5)
+                    
+                    if len(faces) > 0:
+                        for (x, y, w, h) in faces:
+                            cv2.rectangle(processed_frame, (x, y), (x + w, y + h), (255, 0, 0), 2)
+                            cv2.putText(processed_frame, "ROSTO DETECTADO!", (x, y - 10),
+                                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
+                        
+                        if not self.sound_playing:
+                            self.sound_playing = True
+                            self.play_sound()
+                    else:
+                        if self.sound_playing:
+                            self.sound_playing = False
+                            self.stop_music()
+                
+                self.display_image(processed_frame)
+        
+        # Agendar próxima atualização (30 FPS = ~33ms por frame)
+        self.video_after_id = self.root.after(20, self.update_video_file)
+
+    def clear_video_filters(self):
+        """Limpar todos os filtros aplicados ao vídeo"""
+        if not self.is_camera_running and not self.is_video_file_running:
+            messagebox.showinfo("Info", "Inicie a câmera ou carregue um vídeo para usar filtros")
+            return
+        
+        self.video_filters.clear()
+        self.status_label.config(text="Todos os filtros do vídeo foram removidos")
         
     def update_camera(self):
         """Atualizar frame da câmera continuamente"""
         while self.is_camera_running:
             ret, frame = self.video_capture.read()
             if ret:
+                # Aplicar filtros em tempo real
+                processed_frame = frame.copy()
+                
+                for filter_name in self.video_filters:
+                    if filter_name == 'grayscale':
+                        processed_frame = cv2.cvtColor(processed_frame, cv2.COLOR_BGR2GRAY)
+                        processed_frame = cv2.cvtColor(processed_frame, cv2.COLOR_GRAY2BGR)
+                    elif filter_name == 'negative':
+                        processed_frame = 255 - processed_frame
+                    elif filter_name == 'binary':
+                        gray = cv2.cvtColor(processed_frame, cv2.COLOR_BGR2GRAY)
+                        _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+                        processed_frame = cv2.cvtColor(binary, cv2.COLOR_GRAY2BGR)
+                    elif filter_name == 'mean':
+                        processed_frame = cv2.blur(processed_frame, (5, 5))
+                    elif filter_name == 'median':
+                        processed_frame = cv2.medianBlur(processed_frame, 5)
+                    elif filter_name == 'canny':
+                        gray = cv2.cvtColor(processed_frame, cv2.COLOR_BGR2GRAY)
+                        edges = cv2.Canny(gray, 100, 200)
+                        processed_frame = cv2.cvtColor(edges, cv2.COLOR_GRAY2BGR)
+                    elif filter_name == 'erosion':
+                        kernel = np.ones((5, 5), np.uint8)
+                        processed_frame = cv2.erode(processed_frame, kernel, iterations=1)
+                    elif filter_name == 'dilation':
+                        kernel = np.ones((5, 5), np.uint8)
+                        processed_frame = cv2.dilate(processed_frame, kernel, iterations=1)
+                    elif filter_name == 'opening':
+                        kernel = np.ones((5, 5), np.uint8)
+                        processed_frame = cv2.morphologyEx(processed_frame, cv2.MORPH_OPEN, kernel)
+                    elif filter_name == 'closing':
+                        kernel = np.ones((5, 5), np.uint8)
+                        processed_frame = cv2.morphologyEx(processed_frame, cv2.MORPH_CLOSE, kernel)
+                
                 # Aplicar rastreamento se habilitado
                 if self.tracking_enabled and self.tracker and self.tracker_bbox:
-                    success, bbox = self.tracker.update(frame)
+                    success, bbox = self.tracker.update(processed_frame)
                     if success:
                         x, y, w, h = [int(v) for v in bbox]
-                        cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
-                        cv2.putText(frame, "Rastreando", (x, y - 10), 
+                        cv2.rectangle(processed_frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+                        cv2.putText(processed_frame, "Rastreando", (x, y - 10), 
                                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
                 
                 # Detecção de rosto
                 if hasattr(self, 'face_detection_enabled') and self.face_detection_enabled:
-                    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                    gray = cv2.cvtColor(processed_frame, cv2.COLOR_BGR2GRAY)
                     faces = self.face_cascade.detectMultiScale(gray, 1.3, 5)
                     
-                    if len(faces) > 0 and not self.object_detected:
-                        # Rosto detectado - tocar música
-                        self.object_detected = True
-                        threading.Thread(target=self.play_sound, daemon=True).start()
+                    if len(faces) > 0:
+                        if not self.object_detected:
+                            # Rosto detectado - tocar música
+                            self.object_detected = True
+                            self.play_sound()
                         
-                    if len(faces) == 0:
-                        self.object_detected = False
-                    
-                    for (x, y, w, h) in faces:
-                        cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 0, 0), 2)
-                        cv2.putText(frame, "ROSTO DETECTADO!", (x, y - 10),
-                                   cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 0, 0), 2)
+                        for (x, y, w, h) in faces:
+                            cv2.rectangle(processed_frame, (x, y), (x + w, y + h), (255, 0, 0), 2)
+                            cv2.putText(processed_frame, "ROSTO DETECTADO!", (x, y - 10),
+                                       cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 0, 0), 2)
+                    else:
+                        if self.object_detected:
+                            self.object_detected = False
+                            self.stop_music()
                 
-                self.current_image = frame
-                self.display_image(frame)
+                self.current_image = processed_frame
+                self.display_image(processed_frame)
                 
     def display_image(self, image):
         """Exibir imagem no canvas"""
@@ -230,10 +431,21 @@ class ImageProcessingApp:
             
     def convert_grayscale(self):
         """Converter para níveis de cinza"""
-        if self.current_image is None:
-            messagebox.showwarning("Aviso", "Carregue uma imagem primeiro")
+        if self.current_image is None and not self.is_camera_running and not self.is_video_file_running:
+            messagebox.showwarning("Aviso", "Carregue uma imagem, vídeo ou inicie a câmera primeiro")
+            return
+        
+        # Se estiver com câmera ou vídeo, adicionar/remover filtro em tempo real
+        if self.is_camera_running or self.is_video_file_running:
+            if 'grayscale' in self.video_filters:
+                self.video_filters.remove('grayscale')
+                self.status_label.config(text="Filtro de níveis de cinza desativado no vídeo")
+            else:
+                self.video_filters.append('grayscale')
+                self.status_label.config(text="Filtro de níveis de cinza ativado no vídeo")
             return
             
+        # Para imagens estáticas
         if len(self.current_image.shape) == 3:
             self.current_image = cv2.cvtColor(self.current_image, cv2.COLOR_BGR2GRAY)
             self.display_image(self.current_image)
@@ -243,20 +455,42 @@ class ImageProcessingApp:
             
     def convert_negative(self):
         """Converter para negativo"""
-        if self.current_image is None:
-            messagebox.showwarning("Aviso", "Carregue uma imagem primeiro")
+        if self.current_image is None and not self.is_camera_running and not self.is_video_file_running:
+            messagebox.showwarning("Aviso", "Carregue uma imagem, vídeo ou inicie a câmera primeiro")
+            return
+        
+        # Se estiver com câmera ou vídeo, adicionar/remover filtro em tempo real
+        if self.is_camera_running or self.is_video_file_running:
+            if 'negative' in self.video_filters:
+                self.video_filters.remove('negative')
+                self.status_label.config(text="Filtro negativo desativado no vídeo")
+            else:
+                self.video_filters.append('negative')
+                self.status_label.config(text="Filtro negativo ativado no vídeo")
             return
             
+        # Para imagens estáticas
         self.current_image = 255 - self.current_image
         self.display_image(self.current_image)
         self.status_label.config(text="Negativo aplicado")
         
     def convert_binary_otsu(self):
         """Converter para binária usando Otsu"""
-        if self.current_image is None:
-            messagebox.showwarning("Aviso", "Carregue uma imagem primeiro")
+        if self.current_image is None and not self.is_camera_running and not self.is_video_file_running:
+            messagebox.showwarning("Aviso", "Carregue uma imagem, vídeo ou inicie a câmera primeiro")
+            return
+        
+        # Se estiver com câmera ou vídeo, adicionar/remover filtro em tempo real
+        if self.is_camera_running or self.is_video_file_running:
+            if 'binary' in self.video_filters:
+                self.video_filters.remove('binary')
+                self.status_label.config(text="Filtro binário desativado no vídeo")
+            else:
+                self.video_filters.append('binary')
+                self.status_label.config(text="Filtro binário ativado no vídeo")
             return
             
+        # Para imagens estáticas
         # Converter para cinza se necessário
         if len(self.current_image.shape) == 3:
             gray = cv2.cvtColor(self.current_image, cv2.COLOR_BGR2GRAY)
@@ -270,30 +504,63 @@ class ImageProcessingApp:
         
     def apply_mean_filter(self):
         """Aplicar filtro de média"""
-        if self.current_image is None:
-            messagebox.showwarning("Aviso", "Carregue uma imagem primeiro")
+        if self.current_image is None and not self.is_camera_running and not self.is_video_file_running:
+            messagebox.showwarning("Aviso", "Carregue uma imagem, vídeo ou inicie a câmera primeiro")
+            return
+        
+        # Se estiver com câmera, adicionar/remover filtro em tempo real
+        if self.is_camera_running or self.is_video_file_running:
+            if 'mean' in self.video_filters:
+                self.video_filters.remove('mean')
+                self.status_label.config(text="Filtro de média desativado no vídeo")
+            else:
+                self.video_filters.append('mean')
+                self.status_label.config(text="Filtro de média ativado no vídeo")
             return
             
+        # Para imagens estáticas
         self.current_image = cv2.blur(self.current_image, (5, 5))
         self.display_image(self.current_image)
         self.status_label.config(text="Filtro de média aplicado")
         
     def apply_median_filter(self):
         """Aplicar filtro de mediana"""
-        if self.current_image is None:
-            messagebox.showwarning("Aviso", "Carregue uma imagem primeiro")
+        if self.current_image is None and not self.is_camera_running and not self.is_video_file_running:
+            messagebox.showwarning("Aviso", "Carregue uma imagem, vídeo ou inicie a câmera primeiro")
+            return
+        
+        # Se estiver com câmera, adicionar/remover filtro em tempo real
+        if self.is_camera_running or self.is_video_file_running:
+            if 'median' in self.video_filters:
+                self.video_filters.remove('median')
+                self.status_label.config(text="Filtro de mediana desativado no vídeo")
+            else:
+                self.video_filters.append('median')
+                self.status_label.config(text="Filtro de mediana ativado no vídeo")
             return
             
+        # Para imagens estáticas
         self.current_image = cv2.medianBlur(self.current_image, 5)
         self.display_image(self.current_image)
         self.status_label.config(text="Filtro de mediana aplicado")
         
     def apply_canny(self):
         """Aplicar detector de bordas Canny"""
-        if self.current_image is None:
-            messagebox.showwarning("Aviso", "Carregue uma imagem primeiro")
+        if self.current_image is None and not self.is_camera_running and not self.is_video_file_running:
+            messagebox.showwarning("Aviso", "Carregue uma imagem, vídeo ou inicie a câmera primeiro")
+            return
+        
+        # Se estiver com câmera, adicionar/remover filtro em tempo real
+        if self.is_camera_running or self.is_video_file_running:
+            if 'canny' in self.video_filters:
+                self.video_filters.remove('canny')
+                self.status_label.config(text="Detector Canny desativado no vídeo")
+            else:
+                self.video_filters.append('canny')
+                self.status_label.config(text="Detector Canny ativado no vídeo")
             return
             
+        # Para imagens estáticas
         # Converter para cinza se necessário
         if len(self.current_image.shape) == 3:
             gray = cv2.cvtColor(self.current_image, cv2.COLOR_BGR2GRAY)
@@ -307,10 +574,21 @@ class ImageProcessingApp:
         
     def apply_erosion(self):
         """Aplicar erosão"""
-        if self.current_image is None:
-            messagebox.showwarning("Aviso", "Carregue uma imagem primeiro")
+        if self.current_image is None and not self.is_camera_running and not self.is_video_file_running:
+            messagebox.showwarning("Aviso", "Carregue uma imagem, vídeo ou inicie a câmera primeiro")
+            return
+        
+        # Se estiver com câmera, adicionar/remover filtro em tempo real
+        if self.is_camera_running or self.is_video_file_running:
+            if 'erosion' in self.video_filters:
+                self.video_filters.remove('erosion')
+                self.status_label.config(text="Erosão desativada no vídeo")
+            else:
+                self.video_filters.append('erosion')
+                self.status_label.config(text="Erosão ativada no vídeo")
             return
             
+        # Para imagens estáticas
         kernel = np.ones((5, 5), np.uint8)
         self.current_image = cv2.erode(self.current_image, kernel, iterations=1)
         self.display_image(self.current_image)
@@ -318,10 +596,21 @@ class ImageProcessingApp:
         
     def apply_dilation(self):
         """Aplicar dilatação"""
-        if self.current_image is None:
-            messagebox.showwarning("Aviso", "Carregue uma imagem primeiro")
+        if self.current_image is None and not self.is_camera_running and not self.is_video_file_running:
+            messagebox.showwarning("Aviso", "Carregue uma imagem, vídeo ou inicie a câmera primeiro")
+            return
+        
+        # Se estiver com câmera, adicionar/remover filtro em tempo real
+        if self.is_camera_running or self.is_video_file_running:
+            if 'dilation' in self.video_filters:
+                self.video_filters.remove('dilation')
+                self.status_label.config(text="Dilatação desativada no vídeo")
+            else:
+                self.video_filters.append('dilation')
+                self.status_label.config(text="Dilatação ativada no vídeo")
             return
             
+        # Para imagens estáticas
         kernel = np.ones((5, 5), np.uint8)
         self.current_image = cv2.dilate(self.current_image, kernel, iterations=1)
         self.display_image(self.current_image)
@@ -329,10 +618,21 @@ class ImageProcessingApp:
         
     def apply_opening(self):
         """Aplicar abertura"""
-        if self.current_image is None:
-            messagebox.showwarning("Aviso", "Carregue uma imagem primeiro")
+        if self.current_image is None and not self.is_camera_running and not self.is_video_file_running:
+            messagebox.showwarning("Aviso", "Carregue uma imagem, vídeo ou inicie a câmera primeiro")
+            return
+        
+        # Se estiver com câmera, adicionar/remover filtro em tempo real
+        if self.is_camera_running or self.is_video_file_running:
+            if 'opening' in self.video_filters:
+                self.video_filters.remove('opening')
+                self.status_label.config(text="Abertura desativada no vídeo")
+            else:
+                self.video_filters.append('opening')
+                self.status_label.config(text="Abertura ativada no vídeo")
             return
             
+        # Para imagens estáticas
         kernel = np.ones((5, 5), np.uint8)
         self.current_image = cv2.morphologyEx(self.current_image, cv2.MORPH_OPEN, kernel)
         self.display_image(self.current_image)
@@ -340,10 +640,21 @@ class ImageProcessingApp:
         
     def apply_closing(self):
         """Aplicar fechamento"""
-        if self.current_image is None:
-            messagebox.showwarning("Aviso", "Carregue uma imagem primeiro")
+        if self.current_image is None and not self.is_camera_running and not self.is_video_file_running:
+            messagebox.showwarning("Aviso", "Carregue uma imagem, vídeo ou inicie a câmera primeiro")
+            return
+        
+        # Se estiver com câmera, adicionar/remover filtro em tempo real
+        if self.is_camera_running or self.is_video_file_running:
+            if 'closing' in self.video_filters:
+                self.video_filters.remove('closing')
+                self.status_label.config(text="Fechamento desativado no vídeo")
+            else:
+                self.video_filters.append('closing')
+                self.status_label.config(text="Fechamento ativado no vídeo")
             return
             
+        # Para imagens estáticas
         kernel = np.ones((5, 5), np.uint8)
         self.current_image = cv2.morphologyEx(self.current_image, cv2.MORPH_CLOSE, kernel)
         self.display_image(self.current_image)
@@ -511,8 +822,8 @@ class ImageProcessingApp:
                 
     def toggle_face_detection(self):
         """Alternar detecção de rosto com música"""
-        if not self.is_camera_running:
-            messagebox.showwarning("Aviso", "Inicie a câmera primeiro")
+        if not self.is_camera_running and not self.is_video_file_running:
+            messagebox.showwarning("Aviso", "Inicie a câmera ou carregue um vídeo primeiro")
             return
             
         if not hasattr(self, 'face_detection_enabled'):
@@ -524,32 +835,62 @@ class ImageProcessingApp:
             self.status_label.config(text="Detecção de rosto ATIVADA (música ao detectar)")
         else:
             self.status_label.config(text="Detecção de rosto DESATIVADA")
+            # Parar música se estiver tocando
+            if pygame.mixer.music.get_busy():
+                pygame.mixer.music.stop()
+    
+    def load_music_from_path(self):
+        """Carregar música do caminho definido no código"""
+        if self.music_file:
+            try:
+                import os
+                if os.path.exists(self.music_file):
+                    pygame.mixer.music.load(self.music_file)
+                    print(f"✅ Música carregada: {self.music_file}")
+                else:
+                    print(f"⚠️ Arquivo de música não encontrado: {self.music_file}")
+                    print(f"   O sistema usará beep quando detectar rosto.")
+                    print(f"   Altere o caminho da música na linha ~40 do código (self.music_file)")
+            except Exception as e:
+                print(f"❌ Erro ao carregar música: {e}")
+                print(f"   O sistema usará beep quando detectar rosto.")
             
     def play_sound(self):
-        """Tocar som quando objeto detectado"""
+        """Tocar música quando objeto detectado"""
         try:
-            # Criar um beep simples usando pygame
-            # Nota: Em um projeto real, você carregaria um arquivo de música
-            frequency = 440  # Hz
-            duration = 1000  # ms
-            
-            # Gerar tom
-            sample_rate = 22050
-            n_samples = int(round(duration * sample_rate / 1000))
-            
-            buf = np.sin(2 * np.pi * np.arange(n_samples) * frequency / sample_rate)
-            buf = (buf * 32767).astype(np.int16)
-            
-            # Stereo
-            buf = np.column_stack((buf, buf))
-            
-            sound = pygame.sndarray.make_sound(buf)
-            sound.play()
-            
-            print("🎵 ROSTO DETECTADO - Som tocado!")
+            if self.music_file:
+                # Se há arquivo de música carregado, tocar
+                if not pygame.mixer.music.get_busy():
+                    pygame.mixer.music.play(-1)  # -1 = loop infinito
+                    print(f"🎵 ROSTO DETECTADO - Tocando música!")
+            else:
+                # Se não há música, tocar beep
+                frequency = 440  # Hz
+                duration = 500  # ms (reduzido para 500ms)
+                
+                # Gerar tom
+                sample_rate = 22050
+                n_samples = int(round(duration * sample_rate / 1000))
+                
+                buf = np.sin(2 * np.pi * np.arange(n_samples) * frequency / sample_rate)
+                buf = (buf * 32767).astype(np.int16)
+                
+                # Stereo
+                buf = np.column_stack((buf, buf))
+                
+                sound = pygame.sndarray.make_sound(buf)
+                sound.play()
+                
+                print("🎵 ROSTO DETECTADO - Som beep tocado (carregue uma música para tocar)")
             
         except Exception as e:
             print(f"Erro ao tocar som: {e}")
+    
+    def stop_music(self):
+        """Parar música quando não detectar mais rosto"""
+        if pygame.mixer.music.get_busy():
+            pygame.mixer.music.stop()
+            print("🔇 Música parada - Nenhum rosto detectado")
             
     def reset_image(self):
         """Resetar para imagem original"""
