@@ -37,6 +37,8 @@ class ImageProcessingApp:
         # Variáveis de detecção facial e som
         self.face_detection_active = False
         self.sound_playing = False
+        self.frame_count = 0  # Contador de frames para otimização
+        self.detection_interval = 3  # Detectar rosto a cada N frames
         
         # ===== CONFIGURE AQUI O CAMINHO DA MÚSICA =====
         # Coloque o caminho completo do arquivo de música (MP3, WAV ou OGG)
@@ -166,12 +168,9 @@ class ImageProcessingApp:
         
         if file_path:
             self.original_image = cv2.imread(file_path)
-            if self.original_image is not None:
-                self.current_image = self.original_image.copy()
-                self.display_image(self.current_image)
-                self.status_label.config(text=f"Imagem carregada: {file_path}")
-            else:
-                messagebox.showerror("Erro", "Não foi possível carregar a imagem")
+            self.current_image = self.original_image.copy()
+            self.display_image(self.current_image)
+            self.status_label.config(text=f"Imagem carregada: {file_path}")
     
     def load_video(self):
         """Carregar vídeo de arquivo"""
@@ -191,27 +190,20 @@ class ImageProcessingApp:
             self.video_file_path = file_path
             self.video_capture = cv2.VideoCapture(file_path)
             
-            if self.video_capture.isOpened():
-                self.is_video_file_running = True
-                self.video_paused = False
-                # Usar after() em vez de thread para melhor desempenho
-                self.update_video_file()
-                self.status_label.config(text=f"Vídeo carregado: {file_path}")
-            else:
-                messagebox.showerror("Erro", "Não foi possível carregar o vídeo")
-                self.video_file_path = None
+            self.is_video_file_running = True
+            self.video_paused = False
+            # Usar after() em vez de thread para melhor desempenho
+            self.update_video_file()
+            self.status_label.config(text=f"Vídeo carregado: {file_path}")
                 
     def start_camera(self):
         """Iniciar captura de vídeo da câmera"""
         if not self.is_camera_running:
             self.video_capture = cv2.VideoCapture(0)
-            if self.video_capture.isOpened():
-                self.is_camera_running = True
-                self.video_thread = threading.Thread(target=self.update_camera, daemon=True)
-                self.video_thread.start()
-                self.status_label.config(text="Câmera iniciada")
-            else:
-                messagebox.showerror("Erro", "Não foi possível acessar a câmera")
+            self.is_camera_running = True
+            self.video_thread = threading.Thread(target=self.update_camera, daemon=True)
+            self.video_thread.start()
+            self.status_label.config(text="Câmera iniciada")
                 
     def stop_camera(self):
         """Parar captura de câmera ou vídeo"""
@@ -234,10 +226,6 @@ class ImageProcessingApp:
     
     def toggle_pause_video(self):
         """Pausar/retomar reprodução de vídeo"""
-        if not self.is_video_file_running:
-            messagebox.showinfo("Aviso", "Nenhum vídeo está sendo reproduzido")
-            return
-        
         self.video_paused = not self.video_paused
         status = "pausado" if self.video_paused else "retomado"
         self.status_label.config(text=f"Vídeo {status}")
@@ -294,13 +282,36 @@ class ImageProcessingApp:
                         x, y, w, h = [int(v) for v in box]
                         cv2.rectangle(processed_frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
                 
-                # Aplicar detecção facial se ativa
-                if self.face_detection_active:
-                    gray = cv2.cvtColor(processed_frame, cv2.COLOR_BGR2GRAY)
-                    faces = self.face_cascade.detectMultiScale(gray, 1.3, 5)
+                # Aplicar detecção facial se ativa (otimizado - detecta a cada N frames)
+                if hasattr(self, 'face_detection_enabled') and self.face_detection_enabled:
+                    self.frame_count += 1
                     
-                    if len(faces) > 0:
+                    # Só detectar a cada N frames para melhorar performance
+                    if self.frame_count % self.detection_interval == 0:
+                        # Redimensionar frame para detecção mais rápida
+                        scale_percent = 50  # Reduzir para 50% do tamanho
+                        width = int(processed_frame.shape[1] * scale_percent / 100)
+                        height = int(processed_frame.shape[0] * scale_percent / 100)
+                        small_frame = cv2.resize(processed_frame, (width, height))
+                        
+                        gray = cv2.cvtColor(small_frame, cv2.COLOR_BGR2GRAY)
+                        faces = self.face_cascade.detectMultiScale(gray, 1.1, 4)
+                        
+                        # Escalar coordenadas de volta para o tamanho original
+                        faces_scaled = []
                         for (x, y, w, h) in faces:
+                            x_orig = int(x * 100 / scale_percent)
+                            y_orig = int(y * 100 / scale_percent)
+                            w_orig = int(w * 100 / scale_percent)
+                            h_orig = int(h * 100 / scale_percent)
+                            faces_scaled.append((x_orig, y_orig, w_orig, h_orig))
+                        
+                        # Armazenar detecções para usar nos frames intermediários
+                        self.last_faces = faces_scaled
+                    
+                    # Usar última detecção conhecida
+                    if hasattr(self, 'last_faces') and len(self.last_faces) > 0:
+                        for (x, y, w, h) in self.last_faces:
                             cv2.rectangle(processed_frame, (x, y), (x + w, y + h), (255, 0, 0), 2)
                             cv2.putText(processed_frame, "ROSTO DETECTADO!", (x, y - 10),
                                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2)
@@ -312,6 +323,8 @@ class ImageProcessingApp:
                         if self.sound_playing:
                             self.sound_playing = False
                             self.stop_music()
+                            if hasattr(self, 'last_faces'):
+                                self.last_faces = []
                 
                 self.display_image(processed_frame)
         
@@ -320,10 +333,6 @@ class ImageProcessingApp:
 
     def clear_video_filters(self):
         """Limpar todos os filtros aplicados ao vídeo"""
-        if not self.is_camera_running and not self.is_video_file_running:
-            messagebox.showinfo("Info", "Inicie a câmera ou carregue um vídeo para usar filtros")
-            return
-        
         self.video_filters.clear()
         self.status_label.config(text="Todos os filtros do vídeo foram removidos")
         
@@ -375,10 +384,16 @@ class ImageProcessingApp:
                         cv2.putText(processed_frame, "Rastreando", (x, y - 10), 
                                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
                 
-                # Detecção de rosto
+                # Detecção de rosto (otimizada para câmera)
                 if hasattr(self, 'face_detection_enabled') and self.face_detection_enabled:
-                    gray = cv2.cvtColor(processed_frame, cv2.COLOR_BGR2GRAY)
-                    faces = self.face_cascade.detectMultiScale(gray, 1.3, 5)
+                    # Redimensionar frame para detecção mais rápida
+                    scale_percent = 50
+                    width = int(processed_frame.shape[1] * scale_percent / 100)
+                    height = int(processed_frame.shape[0] * scale_percent / 100)
+                    small_frame = cv2.resize(processed_frame, (width, height))
+                    
+                    gray = cv2.cvtColor(small_frame, cv2.COLOR_BGR2GRAY)
+                    faces = self.face_cascade.detectMultiScale(gray, 1.1, 4)
                     
                     if len(faces) > 0:
                         if not self.object_detected:
@@ -386,9 +401,14 @@ class ImageProcessingApp:
                             self.object_detected = True
                             self.play_sound()
                         
+                        # Escalar coordenadas de volta para o tamanho original
                         for (x, y, w, h) in faces:
-                            cv2.rectangle(processed_frame, (x, y), (x + w, y + h), (255, 0, 0), 2)
-                            cv2.putText(processed_frame, "ROSTO DETECTADO!", (x, y - 10),
+                            x_orig = int(x * 100 / scale_percent)
+                            y_orig = int(y * 100 / scale_percent)
+                            w_orig = int(w * 100 / scale_percent)
+                            h_orig = int(h * 100 / scale_percent)
+                            cv2.rectangle(processed_frame, (x_orig, y_orig), (x_orig + w_orig, y_orig + h_orig), (255, 0, 0), 2)
+                            cv2.putText(processed_frame, "ROSTO DETECTADO!", (x_orig, y_orig - 10),
                                        cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 0, 0), 2)
                     else:
                         if self.object_detected:
@@ -431,10 +451,6 @@ class ImageProcessingApp:
             
     def convert_grayscale(self):
         """Converter para níveis de cinza"""
-        if self.current_image is None and not self.is_camera_running and not self.is_video_file_running:
-            messagebox.showwarning("Aviso", "Carregue uma imagem, vídeo ou inicie a câmera primeiro")
-            return
-        
         # Se estiver com câmera ou vídeo, adicionar/remover filtro em tempo real
         if self.is_camera_running or self.is_video_file_running:
             if 'grayscale' in self.video_filters:
@@ -450,15 +466,9 @@ class ImageProcessingApp:
             self.current_image = cv2.cvtColor(self.current_image, cv2.COLOR_BGR2GRAY)
             self.display_image(self.current_image)
             self.status_label.config(text="Convertido para níveis de cinza")
-        else:
-            messagebox.showinfo("Info", "A imagem já está em níveis de cinza")
             
     def convert_negative(self):
         """Converter para negativo"""
-        if self.current_image is None and not self.is_camera_running and not self.is_video_file_running:
-            messagebox.showwarning("Aviso", "Carregue uma imagem, vídeo ou inicie a câmera primeiro")
-            return
-        
         # Se estiver com câmera ou vídeo, adicionar/remover filtro em tempo real
         if self.is_camera_running or self.is_video_file_running:
             if 'negative' in self.video_filters:
@@ -476,10 +486,6 @@ class ImageProcessingApp:
         
     def convert_binary_otsu(self):
         """Converter para binária usando Otsu"""
-        if self.current_image is None and not self.is_camera_running and not self.is_video_file_running:
-            messagebox.showwarning("Aviso", "Carregue uma imagem, vídeo ou inicie a câmera primeiro")
-            return
-        
         # Se estiver com câmera ou vídeo, adicionar/remover filtro em tempo real
         if self.is_camera_running or self.is_video_file_running:
             if 'binary' in self.video_filters:
@@ -504,10 +510,6 @@ class ImageProcessingApp:
         
     def apply_mean_filter(self):
         """Aplicar filtro de média"""
-        if self.current_image is None and not self.is_camera_running and not self.is_video_file_running:
-            messagebox.showwarning("Aviso", "Carregue uma imagem, vídeo ou inicie a câmera primeiro")
-            return
-        
         # Se estiver com câmera, adicionar/remover filtro em tempo real
         if self.is_camera_running or self.is_video_file_running:
             if 'mean' in self.video_filters:
@@ -525,10 +527,6 @@ class ImageProcessingApp:
         
     def apply_median_filter(self):
         """Aplicar filtro de mediana"""
-        if self.current_image is None and not self.is_camera_running and not self.is_video_file_running:
-            messagebox.showwarning("Aviso", "Carregue uma imagem, vídeo ou inicie a câmera primeiro")
-            return
-        
         # Se estiver com câmera, adicionar/remover filtro em tempo real
         if self.is_camera_running or self.is_video_file_running:
             if 'median' in self.video_filters:
@@ -546,10 +544,6 @@ class ImageProcessingApp:
         
     def apply_canny(self):
         """Aplicar detector de bordas Canny"""
-        if self.current_image is None and not self.is_camera_running and not self.is_video_file_running:
-            messagebox.showwarning("Aviso", "Carregue uma imagem, vídeo ou inicie a câmera primeiro")
-            return
-        
         # Se estiver com câmera, adicionar/remover filtro em tempo real
         if self.is_camera_running or self.is_video_file_running:
             if 'canny' in self.video_filters:
@@ -574,10 +568,6 @@ class ImageProcessingApp:
         
     def apply_erosion(self):
         """Aplicar erosão"""
-        if self.current_image is None and not self.is_camera_running and not self.is_video_file_running:
-            messagebox.showwarning("Aviso", "Carregue uma imagem, vídeo ou inicie a câmera primeiro")
-            return
-        
         # Se estiver com câmera, adicionar/remover filtro em tempo real
         if self.is_camera_running or self.is_video_file_running:
             if 'erosion' in self.video_filters:
@@ -596,10 +586,6 @@ class ImageProcessingApp:
         
     def apply_dilation(self):
         """Aplicar dilatação"""
-        if self.current_image is None and not self.is_camera_running and not self.is_video_file_running:
-            messagebox.showwarning("Aviso", "Carregue uma imagem, vídeo ou inicie a câmera primeiro")
-            return
-        
         # Se estiver com câmera, adicionar/remover filtro em tempo real
         if self.is_camera_running or self.is_video_file_running:
             if 'dilation' in self.video_filters:
@@ -618,10 +604,6 @@ class ImageProcessingApp:
         
     def apply_opening(self):
         """Aplicar abertura"""
-        if self.current_image is None and not self.is_camera_running and not self.is_video_file_running:
-            messagebox.showwarning("Aviso", "Carregue uma imagem, vídeo ou inicie a câmera primeiro")
-            return
-        
         # Se estiver com câmera, adicionar/remover filtro em tempo real
         if self.is_camera_running or self.is_video_file_running:
             if 'opening' in self.video_filters:
@@ -640,10 +622,6 @@ class ImageProcessingApp:
         
     def apply_closing(self):
         """Aplicar fechamento"""
-        if self.current_image is None and not self.is_camera_running and not self.is_video_file_running:
-            messagebox.showwarning("Aviso", "Carregue uma imagem, vídeo ou inicie a câmera primeiro")
-            return
-        
         # Se estiver com câmera, adicionar/remover filtro em tempo real
         if self.is_camera_running or self.is_video_file_running:
             if 'closing' in self.video_filters:
@@ -662,10 +640,6 @@ class ImageProcessingApp:
         
     def show_histogram(self):
         """Mostrar histograma"""
-        if self.current_image is None:
-            messagebox.showwarning("Aviso", "Carregue uma imagem primeiro")
-            return
-            
         import matplotlib.pyplot as plt
         
         plt.figure(figsize=(10, 4))
@@ -694,10 +668,6 @@ class ImageProcessingApp:
         
     def calculate_metrics(self):
         """Calcular área, perímetro e diâmetro em imagem binária"""
-        if self.current_image is None:
-            messagebox.showwarning("Aviso", "Carregue uma imagem primeiro")
-            return
-            
         # Verificar se é binária
         if len(self.current_image.shape) == 3:
             gray = cv2.cvtColor(self.current_image, cv2.COLOR_BGR2GRAY)
@@ -733,10 +703,6 @@ class ImageProcessingApp:
         
     def count_objects(self):
         """Contar objetos usando crescimento de região"""
-        if self.current_image is None:
-            messagebox.showwarning("Aviso", "Carregue uma imagem primeiro")
-            return
-            
         # Converter para binária
         if len(self.current_image.shape) == 3:
             gray = cv2.cvtColor(self.current_image, cv2.COLOR_BGR2GRAY)
@@ -801,10 +767,6 @@ class ImageProcessingApp:
         
     def init_tracking(self):
         """Inicializar rastreamento de objeto"""
-        if not self.is_camera_running:
-            messagebox.showwarning("Aviso", "Inicie a câmera primeiro")
-            return
-            
         # Selecionar ROI
         if self.current_image is not None:
             roi = cv2.selectROI("Selecione o objeto para rastrear", self.current_image, False)
@@ -817,15 +779,9 @@ class ImageProcessingApp:
                 self.tracker_bbox = roi
                 self.tracking_enabled = True
                 self.status_label.config(text="Rastreamento iniciado")
-            else:
-                messagebox.showwarning("Aviso", "ROI inválida")
                 
     def toggle_face_detection(self):
         """Alternar detecção de rosto com música"""
-        if not self.is_camera_running and not self.is_video_file_running:
-            messagebox.showwarning("Aviso", "Inicie a câmera ou carregue um vídeo primeiro")
-            return
-            
         if not hasattr(self, 'face_detection_enabled'):
             self.face_detection_enabled = False
             
@@ -862,7 +818,6 @@ class ImageProcessingApp:
                 # Se há arquivo de música carregado, tocar
                 if not pygame.mixer.music.get_busy():
                     pygame.mixer.music.play(-1)  # -1 = loop infinito
-                    print(f"🎵 ROSTO DETECTADO - Tocando música!")
             else:
                 # Se não há música, tocar beep
                 frequency = 440  # Hz
@@ -880,8 +835,6 @@ class ImageProcessingApp:
                 
                 sound = pygame.sndarray.make_sound(buf)
                 sound.play()
-                
-                print("🎵 ROSTO DETECTADO - Som beep tocado (carregue uma música para tocar)")
             
         except Exception as e:
             print(f"Erro ao tocar som: {e}")
@@ -890,7 +843,6 @@ class ImageProcessingApp:
         """Parar música quando não detectar mais rosto"""
         if pygame.mixer.music.get_busy():
             pygame.mixer.music.stop()
-            print("🔇 Música parada - Nenhum rosto detectado")
             
     def reset_image(self):
         """Resetar para imagem original"""
@@ -898,8 +850,6 @@ class ImageProcessingApp:
             self.current_image = self.original_image.copy()
             self.display_image(self.current_image)
             self.status_label.config(text="Imagem resetada para original")
-        else:
-            messagebox.showinfo("Info", "Nenhuma imagem original para resetar")
             
     def __del__(self):
         """Limpeza ao fechar"""
