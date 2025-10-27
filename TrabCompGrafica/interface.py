@@ -78,8 +78,8 @@ class Interface:
     
     def _criar_secao_rastreamento(self, parent):
         ttk.Label(parent, text="RASTREAMENTO", font=('Arial', 10, 'bold')).pack(pady=(0, 5))
-        ttk.Button(parent, text="Iniciar Rastreamento", command=self.iniciar_rastreamento, width=25).pack(pady=2)
         ttk.Button(parent, text="Detectar Rosto + Música", command=self.alternar_deteccao_facial, width=25).pack(pady=2)
+        ttk.Button(parent, text="Detectar Pelúcia + Música", command=self.alternar_reconhecimento_objeto, width=25).pack(pady=2)
     
     def _criar_painel_display(self, parent):
         right_frame = ttk.Frame(parent)
@@ -147,8 +147,7 @@ class Interface:
     
     def iniciar_camera(self):
         if self.processador.iniciar_camera():
-            self.video_thread = threading.Thread(target=self.atualizar_camera, daemon=True)
-            self.video_thread.start()
+            self.atualizar_camera()
     
     def parar_camera(self):
         self.processador.parar()
@@ -161,11 +160,14 @@ class Interface:
         status = self.processador.pausar_retomar()
     
     def atualizar_camera(self):
-        while self.processador.is_camera_running:
-            frame = self.processador.processar_frame_camera()
-            if frame is not None:
-                self.current_image = frame
-                self.exibir_imagem(frame)
+        if not self.processador.is_camera_running:
+            return
+        frame = self.processador.processar_frame_camera()
+        if frame is not None:
+            self.current_image = frame
+            self.exibir_imagem(frame)
+        # Atualiza a cada 30ms
+        self.video_after_id = self.root.after(30, self.atualizar_camera)
     
     def atualizar_video(self):
         if not self.processador.is_video_file_running:
@@ -194,14 +196,28 @@ class Interface:
         self.processador.limpar_filtros()
         pass
     
-    def iniciar_rastreamento(self):
-        if self.current_image is not None:
-            if self.processador.iniciar_rastreamento(self.current_image):
-                pass
-    
     def alternar_deteccao_facial(self):
         ativa = self.processador.alternar_deteccao_facial()
         pass
+    
+    def alternar_reconhecimento_objeto(self):
+        """Alternar reconhecimento de objeto predefinido (pelúcia)"""
+        import os
+        # Caminho para o template da pelúcia
+        template_path = os.path.join(os.path.dirname(__file__), "pelucia1.jpg")
+        
+        if not self.processador.objeto_recognition_enabled:
+            # Ativar reconhecimento
+            if self.processador.ativar_reconhecimento_objeto(template_path, threshold=0.5):
+                messagebox.showinfo("Reconhecimento de Objeto", 
+                                  "Reconhecimento de pelúcia ativado!\nO som tocará quando a pelúcia for detectada.\n\nDica: Observe o valor de 'Confiança' no canto da tela.")
+            else:
+                messagebox.showerror("Erro", 
+                                   f"Não foi possível carregar o template 'pelucia.jpg'.\nVerifique se o arquivo existe em:\n{template_path}")
+        else:
+            # Desativar reconhecimento
+            self.processador.desativar_reconhecimento_objeto()
+            messagebox.showinfo("Reconhecimento de Objeto", "Reconhecimento de pelúcia desativado.")
     
     def mostrar_histograma(self):
         if self.current_image is None:
