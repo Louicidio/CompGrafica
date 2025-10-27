@@ -22,11 +22,6 @@ class Interface:
         self.root.geometry("1400x800")
         
         self.criar_widgets()
-        # Atalho para parar rastreamento com a tecla P
-        self.root.bind('<Key-p>', self._parar_rastreamento_evento)
-
-    def _parar_rastreamento_evento(self, event=None):
-        self.processador.parar_rastreamento()
     
     def criar_widgets(self):
         main_frame = ttk.Frame(self.root)
@@ -209,15 +204,10 @@ class Interface:
         if not self.processador.objeto_recognition_enabled:
             # Ativar reconhecimento
             if self.processador.ativar_reconhecimento_objeto(template_path, threshold=0.5):
-                messagebox.showinfo("Reconhecimento de Objeto", 
-                                  "Reconhecimento de pelúcia ativado!\nO som tocará quando a pelúcia for detectada.\n\nDica: Observe o valor de 'Confiança' no canto da tela.")
-            else:
-                messagebox.showerror("Erro", 
-                                   f"Não foi possível carregar o template 'pelucia.jpg'.\nVerifique se o arquivo existe em:\n{template_path}")
+                pass
         else:
             # Desativar reconhecimento
             self.processador.desativar_reconhecimento_objeto()
-            messagebox.showinfo("Reconhecimento de Objeto", "Reconhecimento de pelúcia desativado.")
     
     def mostrar_histograma(self):
         if self.current_image is None:

@@ -5,8 +5,8 @@ from interface import Interface
 
 def main():
     """Função principal"""
-    CAMINHO_MUSICA = r"C:\Users\luise\Desktop\2025-2\CompGrafica\TrabCompGrafica\homelander.wav"
-    CAMINHO_MUSICA_PELUCIA = r"C:\Users\luise\Desktop\2025-2\CompGrafica\TrabCompGrafica\amongus.mp3"
+    CAMINHO_MUSICA = r"C:\Users\Luis Eduardo\Desktop\2025\2 Semestre\CompGrafica\TrabCompGrafica\homelander.wav"
+    CAMINHO_MUSICA_PELUCIA = r"C:\Users\Luis Eduardo\Desktop\2025\2 Semestre\CompGrafica\TrabCompGrafica\amongus.mp3"
     
     root = tk.Tk()
     

@@ -8,11 +8,6 @@ from filtros import Filtros
 
 
 class ProcessadorVideo:
-    def parar_rastreamento(self):
-        """Parar o rastreamento de objetos"""
-        self.tracking_enabled = False
-        self.tracker = None
-        self.tracker_bbox = None
     """Classe responsável por processar vídeos e câmera"""
     def __init__(self, music_file=None, music_file_objeto=None):
         self.video_capture = None
@@ -23,10 +18,6 @@ class ProcessadorVideo:
         self.video_thread = None
         # Filtros ativos
         self.video_filters = []
-        # Rastreamento
-        self.tracking_enabled = False
-        self.tracker = None
-        self.tracker_bbox = None
         # Detecção facial
         self.face_detection_enabled = False
         self.object_detected = False
@@ -70,20 +61,14 @@ class ProcessadorVideo:
                     scale = max_size / max(h, w)
                     new_h, new_w = int(h * scale), int(w * scale)
                     self.objeto_template = cv2.resize(self.objeto_template, (new_w, new_h))
-                    print(f"Template redimensionado de {w}x{h} para {new_w}x{new_h}")
                 
                 self.objeto_recognition_enabled = True
                 self.objeto_threshold = threshold
                 self.objeto_detected_state = False
-                print(f"Template carregado: {template_path}")
-                print(f"Tamanho do template: {self.objeto_template.shape}")
-                print(f"Limiar de confiança: {threshold}")
                 return True
             else:
-                print(f"Erro ao carregar template: {template_path}")
                 return False
         else:
-            print(f"Template não encontrado: {template_path}")
             return False
     
     def desativar_reconhecimento_objeto(self):
@@ -142,10 +127,6 @@ class ProcessadorVideo:
         # Aplicar filtros
         processed_frame = Filtros.aplicar_filtros(frame, self.video_filters)
         
-        # Aplicar rastreamento
-        if self.tracking_enabled and self.tracker and self.tracker_bbox:
-            processed_frame = self._aplicar_rastreamento(processed_frame)
-        
         # Aplicar detecção facial
         if self.face_detection_enabled:
             processed_frame = self._aplicar_deteccao_facial_camera(processed_frame)
@@ -169,10 +150,6 @@ class ProcessadorVideo:
         # Aplicar filtros
         processed_frame = Filtros.aplicar_filtros(frame, self.video_filters)
         
-        # Aplicar rastreamento
-        if self.tracker:
-            processed_frame = self._aplicar_rastreamento(processed_frame)
-        
         # Aplicar detecção facial (otimizado)
         if self.face_detection_enabled:
             processed_frame = self._aplicar_deteccao_facial_video(processed_frame)
@@ -182,15 +159,6 @@ class ProcessadorVideo:
             processed_frame = self._aplicar_reconhecimento_objeto(processed_frame)
         
         return processed_frame
-    
-    def _aplicar_rastreamento(self, frame):
-        success, bbox = self.tracker.update(frame)
-        if success:
-            x, y, w, h = [int(v) for v in bbox]
-            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
-            cv2.putText(frame, "Rastreando", (x, y - 10), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
-        return frame
     
     def _aplicar_deteccao_facial_camera(self, frame):
         # Redimensionar para detecção mais rápida
@@ -234,7 +202,7 @@ class ProcessadorVideo:
             small_frame = cv2.resize(frame, (width, height))
             
             gray = cv2.cvtColor(small_frame, cv2.COLOR_BGR2GRAY)
-            faces = self.face_cascade.detectMultiScale(gray, 1.1, 4)
+            faces = self.face_cascade.detectMultiScale(gray, 1.15, 5)
             
             # Escalar coordenadas
             faces_scaled = []
@@ -309,7 +277,7 @@ class ProcessadorVideo:
             top_left = best_location
             bottom_right = (top_left[0] + best_size[0], top_left[1] + best_size[1])
             cv2.rectangle(frame, top_left, bottom_right, (0, 0, 255), 3)
-            cv2.putText(frame, f"PELUCIA DETECTADA ({best_match:.2f})", 
+            cv2.putText(frame, f"IMPOSTOR ({best_match:.2f})", 
                        (top_left[0], top_left[1] - 10),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
             
@@ -326,19 +294,6 @@ class ProcessadorVideo:
                    cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
         
         return frame
-    
-    def iniciar_rastreamento(self, frame):
-        if frame is not None:
-            roi = cv2.selectROI("Selecione o objeto para rastrear", frame, False)
-            cv2.destroyWindow("Selecione o objeto para rastrear")
-            
-            if roi[2] > 0 and roi[3] > 0:
-                self.tracker = cv2.TrackerCSRT_create()
-                self.tracker.init(frame, roi)
-                self.tracker_bbox = roi
-                self.tracking_enabled = True
-                return True
-        return False
     
     def alternar_deteccao_facial(self):
         self.face_detection_enabled = not self.face_detection_enabled
