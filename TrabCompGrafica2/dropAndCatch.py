@@ -5,6 +5,7 @@ from OpenGL.GLU import *
 import random
 import math
 import time
+import os
 
 # Configurações do jogo
 SCREEN_WIDTH = 1024
@@ -136,9 +137,15 @@ def create_texture_from_color(color, width=64, height=64):
     
     texture_id = glGenTextures(1)
     glBindTexture(GL_TEXTURE_2D, texture_id)
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, data)
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+    
+    # Usar gluBuild2DMipmaps para gerar mipmaps automaticamente
+    gluBuild2DMipmaps(GL_TEXTURE_2D, GL_RGBA, width, height, GL_RGBA, GL_UNSIGNED_BYTE, data)
+    
+    # Usar filtros de mipmap para melhor qualidade
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT)
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT)
     
     return texture_id
 
@@ -154,9 +161,15 @@ def create_grid_texture(size=64):
     
     texture_id = glGenTextures(1)
     glBindTexture(GL_TEXTURE_2D, texture_id)
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, size, size, 0, GL_RGBA, GL_UNSIGNED_BYTE, bytes(data))
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+    
+    # Usar gluBuild2DMipmaps para gerar mipmaps automaticamente
+    gluBuild2DMipmaps(GL_TEXTURE_2D, GL_RGBA, size, size, GL_RGBA, GL_UNSIGNED_BYTE, bytes(data))
+    
+    # Usar filtros de mipmap para melhor qualidade
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR)
     glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT)
+    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT)
     
     return texture_id
 
@@ -175,6 +188,61 @@ class TextureManager:
         self.textures['wall'] = create_texture_from_color((0.1, 0.1, 0.3))
         self.textures['back_wall'] = create_texture_from_color((0.1, 0.2, 0.3))
         self.textures['floor'] = create_grid_texture()
+        
+        # Carregar textura da galáxia
+        self.textures['galaxy'] = self.load_image_texture('images/galaxy.jpg')
+        
+        # Carregar texturas dos objetos colecionáveis
+        self.textures['sun'] = self.load_image_texture('images/sun.jpg')
+        self.textures['earth'] = self.load_image_texture('images/earth.jpg')
+        self.textures['moon'] = self.load_image_texture('images/moon.jpg')
+
+    
+    def load_image_texture(self, filepath):
+        """Carrega uma textura de um arquivo de imagem"""
+        try:
+            if not os.path.exists(filepath):
+                print(f"Aviso: Arquivo de textura não encontrado: {filepath}")
+                return create_texture_from_color((0.05, 0.05, 0.15))
+            
+            # Carregar imagem com Pygame
+            image = pygame.image.load(filepath)
+            image = pygame.transform.flip(image, False, True)  # Inverter verticalmente
+            
+            # Obter dados da imagem
+            width, height = image.get_size()
+            
+            # Converter para RGBA
+            image = image.convert_alpha()
+            image_data = pygame.image.tostring(image, "RGBA", True)
+            
+            # Criar textura OpenGL
+            texture_id = glGenTextures(1)
+            glBindTexture(GL_TEXTURE_2D, texture_id)
+            
+            # Usar gluBuild2DMipmaps para gerar mipmaps automaticamente
+            gluBuild2DMipmaps(GL_TEXTURE_2D, GL_RGBA, width, height, 
+                            GL_RGBA, GL_UNSIGNED_BYTE, image_data)
+            
+            # Configurar filtros de textura com mipmaps
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR_MIPMAP_LINEAR)
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+            # USAR CLAMP_TO_EDGE para evitar repetição em skybox
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE)
+            glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE)
+            
+            # Filtro anisotrópico (opcional, melhora qualidade em ângulos)
+            try:
+                from OpenGL.GL.EXT.texture_filter_anisotropic import GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT, GL_TEXTURE_MAX_ANISOTROPY_EXT
+                max_anisotropy = glGetFloatv(GL_MAX_TEXTURE_MAX_ANISOTROPY_EXT)
+                glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAX_ANISOTROPY_EXT, min(8.0, max_anisotropy))
+            except:
+                pass  # Extensão não disponível
+            
+            return texture_id
+        except Exception as e:
+            print(f"Erro ao carregar textura {filepath}: {e}")
+            return create_texture_from_color((0.05, 0.05, 0.15))
     
     def bind(self, name):
         """Vincula uma textura pelo nome"""
@@ -252,11 +320,14 @@ class Item:
         glDisable(GL_TEXTURE_2D)
     
     def draw_star(self):
-        self.texture_manager.bind('star')
-        glColor3f(1.0, 0.84, 0.0)
-        draw_sphere(0.3, 15, 15)
+        # Usar textura do sol para a estrela (esfera)
+        self.texture_manager.bind('sun')
+        glColor3f(1.0, 1.0, 1.0)  # Branco para não alterar a textura
+        draw_sphere(0.3, 20, 20)
         
-        # Pontas da estrela
+        # Pontas da estrela (sem textura, com cor dourada)
+        glDisable(GL_TEXTURE_2D)
+        glColor3f(1.0, 0.84, 0.0)
         for i in range(5):
             angle = i * 72
             glPushMatrix()
@@ -265,18 +336,21 @@ class Item:
             glScalef(0.5, 0.2, 0.2)
             draw_cube(0.3)
             glPopMatrix()
+        glEnable(GL_TEXTURE_2D)
     
     def draw_coin(self):
-        self.texture_manager.bind('coin')
-        glColor3f(0.75, 0.75, 0.75)
+        # Usar textura da lua para a moeda (cilindro)
+        self.texture_manager.bind('moon')
+        glColor3f(1.0, 1.0, 1.0)  # Branco para não alterar a textura
         glPushMatrix()
         glRotatef(90, 1, 0, 0)
         draw_cylinder(0.3, 0.1, 20)
         glPopMatrix()
     
     def draw_cube_item(self):
-        self.texture_manager.bind('cube')
-        glColor3f(0.0, 0.8, 1.0)
+        # Usar textura da Terra para o cubo
+        self.texture_manager.bind('earth')
+        glColor3f(1.0, 1.0, 1.0)  # Branco para não alterar a textura
         draw_cube(0.5)
 
 class Player:
@@ -366,6 +440,35 @@ class Game:
         self.camera = Camera()
         self.best_scores = {'TIME': 0, 'CAPACITY': 0, 'SURVIVAL': 0}
         
+        # Carregar sons
+        self.load_sounds()
+        
+    def load_sounds(self):
+        """Carrega os sons do jogo"""
+        try:
+            pygame.mixer.init()
+            self.sounds = {
+                'catch': pygame.mixer.Sound('catch.wav'),
+                'miss': pygame.mixer.Sound('miss.wav'),
+                'losing': pygame.mixer.Sound('losing.wav')
+            }
+            print("Sons carregados com sucesso!")
+        except Exception as e:
+            print(f"Erro ao carregar sons: {e}")
+            self.sounds = {
+                'catch': None,
+                'miss': None,
+                'losing': None
+            }
+    
+    def play_sound(self, sound_name):
+        """Toca um som"""
+        if self.sounds.get(sound_name):
+            try:
+                self.sounds[sound_name].play()
+            except Exception as e:
+                print(f"Erro ao tocar som {sound_name}: {e}")
+        
     def set_objective(self, objective):
         self.objective = objective
         self.state = 'PLAYING'
@@ -408,11 +511,19 @@ class Game:
                 item.collected = True
                 self.score += item.points
                 items_to_remove.append(item)
+                # Tocar som de captura
+                self.play_sound('catch')
             
             elif item.y < -5:
                 items_to_remove.append(item)
+                # Tocar som de perda
+                self.play_sound('miss')
+                
                 if self.objective == 'SURVIVAL':
                     self.lives -= 1
+                    # Tocar som de perder vida
+                    self.play_sound('losing')
+                    
                     if self.lives <= 0:
                         self.state = 'GAME_OVER'
                         self.update_best_score()
@@ -467,11 +578,100 @@ class Game:
         glLightfv(GL_LIGHT0, GL_SPECULAR, light_specular)
     
     def render_scenario(self):
+        # Desenhar skybox completo da galáxia
+        glDisable(GL_LIGHTING)
         glEnable(GL_TEXTURE_2D)
+        self.texture_manager.bind('galaxy')
+        glDepthMask(GL_FALSE)  # Não escrever no depth buffer
         
-        # Chão
-        self.texture_manager.bind('floor')
+        # Fundo (atrás)
+        glPushMatrix()
+        glTranslatef(0, 0, -20)
         glColor3f(1, 1, 1)
+        glBegin(GL_QUADS)
+        glTexCoord2f(0, 0); glVertex3f(-20, -20, 0)
+        glTexCoord2f(1, 0); glVertex3f(20, -20, 0)
+        glTexCoord2f(1, 1); glVertex3f(20, 20, 0)
+        glTexCoord2f(0, 1); glVertex3f(-20, 20, 0)
+        glEnd()
+        glPopMatrix()
+        
+        # Frente
+        glPushMatrix()
+        glTranslatef(0, 0, 20)
+        glRotatef(180, 0, 1, 0)
+        glColor3f(0.8, 0.8, 0.8)
+        glBegin(GL_QUADS)
+        glTexCoord2f(0, 0); glVertex3f(-20, -20, 0)
+        glTexCoord2f(1, 0); glVertex3f(20, -20, 0)
+        glTexCoord2f(1, 1); glVertex3f(20, 20, 0)
+        glTexCoord2f(0, 1); glVertex3f(-20, 20, 0)
+        glEnd()
+        glPopMatrix()
+        
+        # Esquerda
+        glPushMatrix()
+        glTranslatef(-20, 0, 0)
+        glRotatef(90, 0, 1, 0)
+        glColor3f(0.9, 0.9, 0.9)
+        glBegin(GL_QUADS)
+        glTexCoord2f(0, 0); glVertex3f(-20, -20, 0)
+        glTexCoord2f(1, 0); glVertex3f(20, -20, 0)
+        glTexCoord2f(1, 1); glVertex3f(20, 20, 0)
+        glTexCoord2f(0, 1); glVertex3f(-20, 20, 0)
+        glEnd()
+        glPopMatrix()
+        
+        # Direita
+        glPushMatrix()
+        glTranslatef(20, 0, 0)
+        glRotatef(-90, 0, 1, 0)
+        glColor3f(0.9, 0.9, 0.9)
+        glBegin(GL_QUADS)
+        glTexCoord2f(0, 0); glVertex3f(-20, -20, 0)
+        glTexCoord2f(1, 0); glVertex3f(20, -20, 0)
+        glTexCoord2f(1, 1); glVertex3f(20, 20, 0)
+        glTexCoord2f(0, 1); glVertex3f(-20, 20, 0)
+        glEnd()
+        glPopMatrix()
+        
+        # Topo
+        glPushMatrix()
+        glTranslatef(0, 20, 0)
+        glRotatef(90, 1, 0, 0)
+        glColor3f(0.7, 0.7, 0.8)
+        glBegin(GL_QUADS)
+        glTexCoord2f(0, 0); glVertex3f(-20, -20, 0)
+        glTexCoord2f(1, 0); glVertex3f(20, -20, 0)
+        glTexCoord2f(1, 1); glVertex3f(20, 20, 0)
+        glTexCoord2f(0, 1); glVertex3f(-20, 20, 0)
+        glEnd()
+        glPopMatrix()
+        
+        # Fundo (chão) - mais escuro
+        glPushMatrix()
+        glTranslatef(0, -20, 0)
+        glRotatef(-90, 1, 0, 0)
+        glColor3f(0.5, 0.5, 0.6)
+        glBegin(GL_QUADS)
+        glTexCoord2f(0, 0); glVertex3f(-20, -20, 0)
+        glTexCoord2f(1, 0); glVertex3f(20, -20, 0)
+        glTexCoord2f(1, 1); glVertex3f(20, 20, 0)
+        glTexCoord2f(0, 1); glVertex3f(-20, 20, 0)
+        glEnd()
+        glPopMatrix()
+        
+        glDepthMask(GL_TRUE)  # Reativar escrita no depth buffer
+        
+        # Reativar iluminação
+        glEnable(GL_LIGHTING)
+        
+        # Chão semi-transparente
+        self.texture_manager.bind('floor')
+        glEnable(GL_BLEND)
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+        glColor4f(0.5, 0.5, 0.6, 0.0)  # Tornar mais transparente
+        
         glBegin(GL_QUADS)
         glNormal3f(0, 1, 0)
         glTexCoord2f(0, 0); glVertex3f(-5, -4, -5)
@@ -480,24 +680,12 @@ class Game:
         glTexCoord2f(0, 5); glVertex3f(-5, -4, 5)
         glEnd()
         
-        # Paredes laterais
-        self.texture_manager.bind('wall')
-        glColor3f(1, 1, 1)
+        glDisable(GL_BLEND)
         
-        glPushMatrix()
-        glTranslatef(-5.5, 2, 0)
-        glScalef(0.5, 12, 10)
-        draw_cube(1)
-        glPopMatrix()
-        
-        glPushMatrix()
-        glTranslatef(5.5, 2, 0)
-        glScalef(0.5, 12, 10)
-        draw_cube(1)
-        glPopMatrix()
-        
-        # Parede de fundo
+        # Parede de fundo (única parede)
         self.texture_manager.bind('back_wall')
+        glColor4f(1, 1, 1, 0.0)
+        glEnable(GL_BLEND)
         glPushMatrix()
         glTranslatef(0, 2, -5.5)
         glScalef(10, 12, 0.5)
@@ -511,12 +699,100 @@ class Game:
         self.camera.apply()
         self.setup_lighting()
         
-        # Desenhar cenário de fundo
+        # Desenhar skybox completo da galáxia
+        glDisable(GL_LIGHTING)
         glEnable(GL_TEXTURE_2D)
+        self.texture_manager.bind('galaxy')
+        glDepthMask(GL_FALSE)
         
-        # Chão
+        # Fundo (atrás)
+        glPushMatrix()
+        glTranslatef(0, 0, -20)
+        glColor3f(1, 1, 1)
+        glBegin(GL_QUADS)
+        glTexCoord2f(0, 0); glVertex3f(-20, -20, 0)
+        glTexCoord2f(1, 0); glVertex3f(20, -20, 0)
+        glTexCoord2f(1, 1); glVertex3f(20, 20, 0)
+        glTexCoord2f(0, 1); glVertex3f(-20, 20, 0)
+        glEnd()
+        glPopMatrix()
+        
+        # Frente
+        glPushMatrix()
+        glTranslatef(0, 0, 20)
+        glRotatef(180, 0, 1, 0)
+        glColor3f(0.8, 0.8, 0.8)
+        glBegin(GL_QUADS)
+        glTexCoord2f(0, 0); glVertex3f(-20, -20, 0)
+        glTexCoord2f(1, 0); glVertex3f(20, -20, 0)
+        glTexCoord2f(1, 1); glVertex3f(20, 20, 0)
+        glTexCoord2f(0, 1); glVertex3f(-20, 20, 0)
+        glEnd()
+        glPopMatrix()
+        
+        # Esquerda
+        glPushMatrix()
+        glTranslatef(-20, 0, 0)
+        glRotatef(90, 0, 1, 0)
+        glColor3f(0.9, 0.9, 0.9)
+        glBegin(GL_QUADS)
+        glTexCoord2f(0, 0); glVertex3f(-20, -20, 0)
+        glTexCoord2f(1, 0); glVertex3f(20, -20, 0)
+        glTexCoord2f(1, 1); glVertex3f(20, 20, 0)
+        glTexCoord2f(0, 1); glVertex3f(-20, 20, 0)
+        glEnd()
+        glPopMatrix()
+        
+        # Direita
+        glPushMatrix()
+        glTranslatef(20, 0, 0)
+        glRotatef(-90, 0, 1, 0)
+        glColor3f(0.9, 0.9, 0.9)
+        glBegin(GL_QUADS)
+        glTexCoord2f(0, 0); glVertex3f(-20, -20, 0)
+        glTexCoord2f(1, 0); glVertex3f(20, -20, 0)
+        glTexCoord2f(1, 1); glVertex3f(20, 20, 0)
+        glTexCoord2f(0, 1); glVertex3f(-20, 20, 0)
+        glEnd()
+        glPopMatrix()
+        
+        # Topo
+        glPushMatrix()
+        glTranslatef(0, 20, 0)
+        glRotatef(90, 1, 0, 0)
+        glColor3f(0.7, 0.7, 0.8)
+        glBegin(GL_QUADS)
+        glTexCoord2f(0, 0); glVertex3f(-20, -20, 0)
+        glTexCoord2f(1, 0); glVertex3f(20, -20, 0)
+        glTexCoord2f(1, 1); glVertex3f(20, 20, 0)
+        glTexCoord2f(0, 1); glVertex3f(-20, 20, 0)
+        glEnd()
+        glPopMatrix()
+        
+        # Fundo (chão)
+        glPushMatrix()
+        glTranslatef(0, -20, 0)
+        glRotatef(-90, 1, 0, 0)
+        glColor3f(0.5, 0.5, 0.6)
+        glBegin(GL_QUADS)
+        glTexCoord2f(0, 0); glVertex3f(-20, -20, 0)
+        glTexCoord2f(1, 0); glVertex3f(20, -20, 0)
+        glTexCoord2f(1, 1); glVertex3f(20, 20, 0)
+        glTexCoord2f(0, 1); glVertex3f(-20, 20, 0)
+        glEnd()
+        glPopMatrix()
+        
+        glDepthMask(GL_TRUE)
+        
+        # Reativar iluminação para os objetos 3D
+        glEnable(GL_LIGHTING)
+        
+        # Chão semi-transparente
         self.texture_manager.bind('floor')
-        glColor3f(0.5, 0.5, 0.5)
+        glEnable(GL_BLEND)
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+        glColor4f(0.5, 0.5, 0.6, 0.3)
+        
         glBegin(GL_QUADS)
         glNormal3f(0, 1, 0)
         glTexCoord2f(0, 0); glVertex3f(-5, -4, -5)
@@ -525,20 +801,23 @@ class Game:
         glTexCoord2f(0, 5); glVertex3f(-5, -4, 5)
         glEnd()
         
+        glDisable(GL_BLEND)
+        glColor3f(1, 1, 1)
+        
         # Alguns itens decorativos flutuando
         glPushMatrix()
         glTranslatef(-2, 0, 0)
         glRotatef(time.time() * 20, 0, 1, 0)
-        self.texture_manager.bind('star')
-        glColor3f(1.0, 0.84, 0.0)
-        draw_sphere(0.4, 15, 15)
+        self.texture_manager.bind('sun')  # Textura do sol
+        glColor3f(1.0, 1.0, 1.0)
+        draw_sphere(0.4, 20, 20)
         glPopMatrix()
         
         glPushMatrix()
         glTranslatef(2, 0, 0)
         glRotatef(time.time() * -20, 0, 1, 0)
-        self.texture_manager.bind('coin')
-        glColor3f(0.75, 0.75, 0.75)
+        self.texture_manager.bind('moon')  # Textura da lua
+        glColor3f(1.0, 1.0, 1.0)
         glRotatef(90, 1, 0, 0)
         draw_cylinder(0.4, 0.15, 20)
         glPopMatrix()
@@ -546,24 +825,113 @@ class Game:
         glPushMatrix()
         glTranslatef(0, 1, -2)
         glRotatef(time.time() * 15, 1, 1, 0)
-        self.texture_manager.bind('cube')
-        glColor3f(0.0, 0.8, 1.0)
+        self.texture_manager.bind('earth')  # Textura da Terra
+        glColor3f(1.0, 1.0, 1.0)
         draw_cube(0.6)
         glPopMatrix()
         
         glDisable(GL_TEXTURE_2D)
-    
+        
+        # PAREDE REMOVIDA - sem parede de fundo no menu
     def render_game_over(self):
         """Renderiza um cenário 3D de fundo para a tela de game over"""
         self.camera.apply()
         self.setup_lighting()
         
-        # Desenhar cenário escurecido
+        # Desenhar skybox completo da galáxia (escurecido)
+        glDisable(GL_LIGHTING)
         glEnable(GL_TEXTURE_2D)
+        self.texture_manager.bind('galaxy')
+        glDepthMask(GL_FALSE)
         
-        # Chão
+        # Fundo (atrás)
+        glPushMatrix()
+        glTranslatef(0, 0, -20)
+        glColor3f(0.5, 0.5, 0.5)
+        glBegin(GL_QUADS)
+        glTexCoord2f(0, 0); glVertex3f(-20, -20, 0)
+        glTexCoord2f(1, 0); glVertex3f(20, -20, 0)
+        glTexCoord2f(1, 1); glVertex3f(20, 20, 0)
+        glTexCoord2f(0, 1); glVertex3f(-20, 20, 0)
+        glEnd()
+        glPopMatrix()
+        
+        # Frente
+        glPushMatrix()
+        glTranslatef(0, 0, 20)
+        glRotatef(180, 0, 1, 0)
+        glColor3f(0.4, 0.4, 0.4)
+        glBegin(GL_QUADS)
+        glTexCoord2f(0, 0); glVertex3f(-20, -20, 0)
+        glTexCoord2f(1, 0); glVertex3f(20, -20, 0)
+        glTexCoord2f(1, 1); glVertex3f(20, 20, 0)
+        glTexCoord2f(0, 1); glVertex3f(-20, 20, 0)
+        glEnd()
+        glPopMatrix()
+        
+        # Esquerda
+        glPushMatrix()
+        glTranslatef(-20, 0, 0)
+        glRotatef(90, 0, 1, 0)
+        glColor3f(0.45, 0.45, 0.45)
+        glBegin(GL_QUADS)
+        glTexCoord2f(0, 0); glVertex3f(-20, -20, 0)
+        glTexCoord2f(1, 0); glVertex3f(20, -20, 0)
+        glTexCoord2f(1, 1); glVertex3f(20, 20, 0)
+        glTexCoord2f(0, 1); glVertex3f(-20, 20, 0)
+        glEnd()
+        glPopMatrix()
+        
+        # Direita
+        glPushMatrix()
+        glTranslatef(20, 0, 0)
+        glRotatef(-90, 0, 1, 0)
+        glColor3f(0.45, 0.45, 0.45)
+        glBegin(GL_QUADS)
+        glTexCoord2f(0, 0); glVertex3f(-20, -20, 0)
+        glTexCoord2f(1, 0); glVertex3f(20, -20, 0)
+        glTexCoord2f(1, 1); glVertex3f(20, 20, 0)
+        glTexCoord2f(0, 1); glVertex3f(-20, 20, 0)
+        glEnd()
+        glPopMatrix()
+        
+        # Topo
+        glPushMatrix()
+        glTranslatef(0, 20, 0)
+        glRotatef(90, 1, 0, 0)
+        glColor3f(0.35, 0.35, 0.4)
+        glBegin(GL_QUADS)
+        glTexCoord2f(0, 0); glVertex3f(-20, -20, 0)
+        glTexCoord2f(1, 0); glVertex3f(20, -20, 0)
+        glTexCoord2f(1, 1); glVertex3f(20, 20, 0)
+        glTexCoord2f(0, 1); glVertex3f(-20, 20, 0)
+        glEnd()
+        glPopMatrix()
+        
+        # Fundo (chão)
+        glPushMatrix()
+        glTranslatef(0, -20, 0)
+        glRotatef(-90, 1, 0, 0)
+        glColor3f(0.25, 0.25, 0.3)
+        glBegin(GL_QUADS)
+        glTexCoord2f(0, 0); glVertex3f(-20, -20, 0)
+        glTexCoord2f(1, 0); glVertex3f(20, -20, 0)
+        glTexCoord2f(1, 1); glVertex3f(20, 20, 0)
+        glTexCoord2f(0, 1); glVertex3f(-20, 20, 0)
+        glEnd()
+        glPopMatrix()
+        
+        glDepthMask(GL_TRUE)
+        
+        # Reativar iluminação
+        glEnable(GL_LIGHTING)
+        
+        # Chão semi-transparente escurecido
         self.texture_manager.bind('floor')
-        glColor3f(0.3, 0.3, 0.3)
+        glEnable(GL_BLEND)
+        glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+        glColor4f(0.3, 0.3, 0.3, 0.3)
+        
         glBegin(GL_QUADS)
         glNormal3f(0, 1, 0)
         glTexCoord2f(0, 0); glVertex3f(-5, -4, -5)
@@ -572,19 +940,14 @@ class Game:
         glTexCoord2f(0, 5); glVertex3f(-5, -4, 5)
         glEnd()
         
-        # Paredes escurecidas
-        self.texture_manager.bind('wall')
+        glDisable(GL_BLEND)
+        
+        # Parede de fundo escurecida
+        self.texture_manager.bind('back_wall')
         glColor3f(0.3, 0.3, 0.3)
-        
         glPushMatrix()
-        glTranslatef(-5.5, 2, 0)
-        glScalef(0.5, 12, 10)
-        draw_cube(1)
-        glPopMatrix()
-        
-        glPushMatrix()
-        glTranslatef(5.5, 2, 0)
-        glScalef(0.5, 12, 10)
+        glTranslatef(0, 2, -5.5)
+        glScalef(10, 12, 0.5)
         draw_cube(1)
         glPopMatrix()
         
@@ -640,6 +1003,10 @@ def main():
                         game.set_objective('SURVIVAL')
                     elif event.key == pygame.K_ESCAPE:
                         running = False
+                elif game.state == 'PLAYING':
+                    # Adicionar ESC para pausar/voltar ao menu durante o jogo
+                    if event.key == pygame.K_ESCAPE:
+                        game.state = 'MENU'
                 elif game.state == 'GAME_OVER':
                     if event.key == pygame.K_ESCAPE:
                         game.state = 'MENU'
@@ -759,7 +1126,7 @@ def main():
             overlay.blit(hud_surf, (0, 0))
             
             # Dicas de controle
-            hint_text = small_font.render("Q/E:Zoom | I/K/J/L:Camera", True, (150, 150, 150))
+            hint_text = small_font.render("Q/E:Zoom | I/K/J/L:Camera | ESC:Menu", True, (150, 150, 150))
             overlay.blit(hint_text, (SCREEN_WIDTH - hint_text.get_width() - 20, SCREEN_HEIGHT - 30))
         
         elif game.state == 'GAME_OVER':
