@@ -448,11 +448,10 @@ class Game:
         try:
             pygame.mixer.init()
             self.sounds = {
-                'catch': pygame.mixer.Sound('catch.wav'),
-                'miss': pygame.mixer.Sound('miss.wav'),
-                'losing': pygame.mixer.Sound('losing.wav')
+                'catch': pygame.mixer.Sound('sounds/catch.wav'),
+                'miss': pygame.mixer.Sound('sounds/miss.wav'),
+                'losing': pygame.mixer.Sound('sounds/losing.wav')
             }
-            print("Sons carregados com sucesso!")
         except Exception as e:
             print(f"Erro ao carregar sons: {e}")
             self.sounds = {
